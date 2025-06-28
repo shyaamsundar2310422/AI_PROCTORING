@@ -1,0 +1,52 @@
+body {
+    background-color: #f8f9fa;
+}
+
+.navbar {
+    box-shadow: 0 2px 4px rgba(0,0,0,.1);
+}
+
+.card {
+    box-shadow: 0 4px 6px rgba(0,0,0,.1);
+    border: none;
+    border-radius: 10px;
+}
+
+.card-title {
+    color: #2c3e50;
+    font-weight: 600;
+}
+
+.btn {
+    padding: 0.5rem 1.5rem;
+    border-radius: 5px;
+}
+
+.btn-primary {
+    background-color: #3498db;
+    border-color: #3498db;
+}
+
+.btn-primary:hover {
+    background-color: #2980b9;
+    border-color: #2980b9;
+}
+
+.btn-outline-primary {
+    color: #3498db;
+    border-color: #3498db;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+.your-class {
+  text-align: -webkit-match-parent;
+  text-align: match-parent;
+  text-align: inherit;
+  color-adjust: exact;
+  print-color-adjust: exact;
+  -webkit-print-color-adjust: exact;
+} 

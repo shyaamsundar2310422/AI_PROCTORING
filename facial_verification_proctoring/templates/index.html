@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Exam Proctoring System</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="{{ url_for('static', filename='css/style.css') }}" rel="stylesheet">
+    <style>
+        .role-card {
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+        .role-card:hover {
+            transform: translateY(-5px);
+        }
+        .role-icon {
+            font-size: 3rem;
+            margin-bottom: 1rem;
+        }
+        .login-options {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
+        <div class="container">
+            <a class="navbar-brand" href="/">Exam Proctoring</a>
+        </div>
+    </nav>
+
+    <div class="container mt-5">
+        <!-- Role Selection Section -->
+        <div id="roleSelection" class="text-center">
+            <h2 class="mb-4">Welcome to Exam Proctoring System</h2>
+            <p class="lead mb-5">Please select your role to continue</p>
+            
+            <div class="row justify-content-center">
+                <div class="col-md-4 mb-4">
+                    <div class="card role-card" onclick="showLoginOptions('student')">
+                        <div class="card-body text-center">
+                            <div class="role-icon">👨‍🎓</div>
+                            <h3>Student</h3>
+                            <p class="text-muted">Take exams with AI proctoring</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-4 mb-4">
+                    <div class="card role-card" onclick="showLoginOptions('faculty')">
+                        <div class="card-body text-center">
+                            <div class="role-icon">👨‍🏫</div>
+                            <h3>Faculty</h3>
+                            <p class="text-muted">Create and manage exams</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-4 mb-4">
+                    <div class="card role-card" onclick="showLoginOptions('admin')">
+                        <div class="card-body text-center">
+                            <div class="role-icon">👨‍💼</div>
+                            <h3>Admin</h3>
+                            <p class="text-muted">Manage users and system</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Login/Register Options -->
+        <div id="loginOptions" class="login-options">
+            <div class="row justify-content-center">
+                <div class="col-md-6">
+                    <div class="card">
+                        <div class="card-body text-center">
+                            <h3 id="roleTitle" class="mb-4"></h3>
+                            <div class="d-grid gap-3">
+                                <a id="loginLink" href="#" class="btn btn-primary btn-lg">Login</a>
+                                <a id="registerLink" href="#" class="btn btn-outline-primary btn-lg">Register</a>
+                                <button onclick="backToHome()" class="btn btn-link">Back to Home</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        function showLoginOptions(role) {
+            document.getElementById('roleSelection').style.display = 'none';
+            document.getElementById('loginOptions').style.display = 'block';
+            
+            const roleTitle = document.getElementById('roleTitle');
+            const loginLink = document.getElementById('loginLink');
+            const registerLink = document.getElementById('registerLink');
+            
+            roleTitle.textContent = `${role.charAt(0).toUpperCase() + role.slice(1)} Portal`;
+            
+            if (role === 'student') {
+                loginLink.href = '/login';
+                registerLink.href = '/register';
+            } else if (role === 'faculty') {
+                loginLink.href = '/faculty-login';
+                registerLink.href = '/faculty-register';
+            } else if (role === 'admin') {
+                loginLink.href = '/admin-login';
+                registerLink.style.display = 'none';
+            }
+        }
+
+        function backToHome() {
+            window.location.href = '/';
+        }
+    </script>
+</body>
+</html> 
