@@ -56,7 +56,8 @@
                                         <td>{{ exam.duration }} minutes</td>
                                         <td>{{ exam.total_marks }}</td>
                                         <td>
-                                            <button class="btn btn-sm btn-info">Edit</button>
+                                            <button class="btn btn-sm btn-info" onclick="manageExam({{ exam.id }})">Manage</button>
+                                            <button class="btn btn-sm btn-success" onclick="inviteStudents({{ exam.id }})">Invite</button>
                                             <button class="btn btn-sm btn-danger">Delete</button>
                                         </td>
                                     </tr>
@@ -77,7 +78,7 @@
 
 <!-- Create Exam Modal -->
 <div class="modal fade" id="createExamModal" tabindex="-1">
-    <div class="modal-dialog">
+    <div class="modal-dialog modal-lg">
         <div class="modal-content">
             <div class="modal-header">
                 <h5 class="modal-title">Create New Exam</h5>
@@ -85,29 +86,43 @@
             </div>
             <div class="modal-body">
                 <form id="createExamForm">
-                    <div class="mb-3">
-                        <label for="title" class="form-label">Exam Title</label>
-                        <input type="text" class="form-control" id="title" required>
-                    </div>
-                    <div class="mb-3">
-                        <label for="description" class="form-label">Description</label>
-                        <textarea class="form-control" id="description" rows="3"></textarea>
-                    </div>
-                    <div class="mb-3">
-                        <label for="startTime" class="form-label">Start Time</label>
-                        <input type="datetime-local" class="form-control" id="startTime" required>
-                    </div>
-                    <div class="mb-3">
-                        <label for="endTime" class="form-label">End Time</label>
-                        <input type="datetime-local" class="form-control" id="endTime" required>
-                    </div>
-                    <div class="mb-3">
-                        <label for="duration" class="form-label">Duration (minutes)</label>
-                        <input type="number" class="form-control" id="duration" required>
-                    </div>
-                    <div class="mb-3">
-                        <label for="totalMarks" class="form-label">Total Marks</label>
-                        <input type="number" class="form-control" id="totalMarks" required>
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="title" class="form-label">Exam Title</label>
+                                <input type="text" class="form-control" id="title" required>
+                            </div>
+                            <div class="mb-3">
+                                <label for="description" class="form-label">Description</label>
+                                <textarea class="form-control" id="description" rows="3"></textarea>
+                            </div>
+                            <div class="mb-3">
+                                <label for="startTime" class="form-label">Start Time</label>
+                                <input type="datetime-local" class="form-control" id="startTime" required>
+                            </div>
+                            <div class="mb-3">
+                                <label for="endTime" class="form-label">End Time</label>
+                                <input type="datetime-local" class="form-control" id="endTime" required>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="duration" class="form-label">Duration (minutes)</label>
+                                <input type="number" class="form-control" id="duration" required>
+                            </div>
+                            <div class="mb-3">
+                                <label for="totalMarks" class="form-label">Total Marks</label>
+                                <input type="number" class="form-control" id="totalMarks" required>
+                            </div>
+                            <div class="mb-3">
+                                <label for="questionPaper" class="form-label">Question Paper (PDF/DOCX/TXT)</label>
+                                <input type="file" class="form-control" id="questionPaper" accept=".pdf,.docx,.doc,.txt">
+                            </div>
+                            <div class="mb-3">
+                                <label for="keywordsFile" class="form-label">Keywords File (Optional)</label>
+                                <input type="file" class="form-control" id="keywordsFile" accept=".pdf,.docx,.doc,.txt">
+                            </div>
+                        </div>
                     </div>
                 </form>
             </div>
@@ -119,7 +134,62 @@
     </div>
 </div>
 
+<!-- Manage Exam Modal -->
+<div class="modal fade" id="manageExamModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Manage Exam</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="row">
+                    <div class="col-md-6">
+                        <h6>Uploaded Files</h6>
+                        <div id="examFiles"></div>
+                        <hr>
+                        <h6>Keywords</h6>
+                        <div id="examKeywords"></div>
+                    </div>
+                    <div class="col-md-6">
+                        <h6>Student Invitations</h6>
+                        <div id="examInvitations"></div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Invite Students Modal -->
+<div class="modal fade" id="inviteStudentsModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Invite Students</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label for="studentEmails" class="form-label">Student Email Addresses (one per line)</label>
+                    <textarea class="form-control" id="studentEmails" rows="5" placeholder="student1@example.com&#10;student2@example.com&#10;student3@example.com"></textarea>
+                </div>
+                <div id="invitationStatus"></div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                <button type="button" class="btn btn-primary" id="sendInvitationsBtn">Send Invitations</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <script>
+let currentExamId = null;
+
 document.getElementById('createExamBtn').addEventListener('click', async function() {
     const form = document.getElementById('createExamForm');
     const formData = {
@@ -143,6 +213,20 @@ document.getElementById('createExamBtn').addEventListener('click', async functio
         const data = await response.json();
 
         if (response.ok) {
+            const examId = data.exam_id;
+            
+            // Upload question paper if provided
+            const questionPaperFile = document.getElementById('questionPaper').files[0];
+            if (questionPaperFile) {
+                await uploadFile(examId, questionPaperFile, 'question_paper');
+            }
+            
+            // Upload keywords file if provided
+            const keywordsFile = document.getElementById('keywordsFile').files[0];
+            if (keywordsFile) {
+                await uploadFile(examId, keywordsFile, 'keywords');
+            }
+            
             alert('Exam created successfully!');
             window.location.reload();
         } else {
@@ -151,6 +235,155 @@ document.getElementById('createExamBtn').addEventListener('click', async functio
     } catch (error) {
         console.error('Error:', error);
         alert('An error occurred while creating the exam');
+    }
+});
+
+async function uploadFile(examId, file, fileType) {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('file_type', fileType);
+    
+    try {
+        const response = await fetch(`/api/exam/${examId}/upload-file`, {
+            method: 'POST',
+            body: formData
+        });
+        
+        const data = await response.json();
+        
+        if (response.ok) {
+            console.log(`${fileType} uploaded successfully`);
+            if (data.extracted_keywords && data.extracted_keywords.length > 0) {
+                // Save extracted keywords
+                await saveKeywords(examId, data.extracted_keywords);
+            }
+        } else {
+            console.error(`Failed to upload ${fileType}:`, data.error);
+        }
+    } catch (error) {
+        console.error(`Error uploading ${fileType}:`, error);
+    }
+}
+
+async function saveKeywords(examId, keywords) {
+    const keywordsData = keywords.map(keyword => ({
+        keyword: keyword,
+        weight: 1.0
+    }));
+    
+    try {
+        const response = await fetch(`/api/exam/${examId}/keywords`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ keywords: keywordsData })
+        });
+        
+        const data = await response.json();
+        
+        if (response.ok) {
+            console.log('Keywords saved successfully');
+        } else {
+            console.error('Failed to save keywords:', data.error);
+        }
+    } catch (error) {
+        console.error('Error saving keywords:', error);
+    }
+}
+
+async function manageExam(examId) {
+    currentExamId = examId;
+    
+    try {
+        // Load exam files
+        const filesResponse = await fetch(`/api/exam/${examId}/files`);
+        const filesData = await filesResponse.json();
+        
+        // Load exam keywords
+        const keywordsResponse = await fetch(`/api/exam/${examId}/keywords`);
+        const keywordsData = await keywordsResponse.json();
+        
+        // Load exam invitations
+        const invitationsResponse = await fetch(`/api/exam/${examId}/invitations`);
+        const invitationsData = await invitationsResponse.json();
+        
+        // Update modal content
+        document.getElementById('examFiles').innerHTML = filesData.files.length > 0 
+            ? filesData.files.map(file => `<div class="mb-2"><strong>${file.file_type}:</strong> ${file.original_filename}</div>`).join('')
+            : '<div class="text-muted">No files uploaded</div>';
+        
+        document.getElementById('examKeywords').innerHTML = keywordsData.keywords.length > 0
+            ? keywordsData.keywords.map(kw => `<span class="badge bg-primary me-1">${kw.keyword}</span>`).join('')
+            : '<div class="text-muted">No keywords set</div>';
+        
+        document.getElementById('examInvitations').innerHTML = invitationsData.invitations.length > 0
+            ? invitationsData.invitations.map(inv => `
+                <div class="mb-2">
+                    <div><strong>${inv.student_email}</strong></div>
+                    <small class="text-muted">Code: ${inv.invitation_code}</small>
+                    <span class="badge ${inv.is_accepted ? 'bg-success' : 'bg-warning'} ms-2">
+                        ${inv.is_accepted ? 'Accepted' : 'Pending'}
+                    </span>
+                </div>
+            `).join('')
+            : '<div class="text-muted">No invitations sent</div>';
+        
+        // Show modal
+        new bootstrap.Modal(document.getElementById('manageExamModal')).show();
+    } catch (error) {
+        console.error('Error loading exam data:', error);
+        alert('Error loading exam data');
+    }
+}
+
+async function inviteStudents(examId) {
+    currentExamId = examId;
+    document.getElementById('studentEmails').value = '';
+    document.getElementById('invitationStatus').innerHTML = '';
+    new bootstrap.Modal(document.getElementById('inviteStudentsModal')).show();
+}
+
+document.getElementById('sendInvitationsBtn').addEventListener('click', async function() {
+    const emailsText = document.getElementById('studentEmails').value;
+    const emails = emailsText.split('\n').map(email => email.trim()).filter(email => email);
+    
+    if (emails.length === 0) {
+        alert('Please enter at least one email address');
+        return;
+    }
+    
+    try {
+        const response = await fetch(`/api/exam/${currentExamId}/invite-students`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ student_emails: emails })
+        });
+        
+        const data = await response.json();
+        
+        if (response.ok) {
+            document.getElementById('invitationStatus').innerHTML = `
+                <div class="alert alert-success">
+                    ${data.message}
+                </div>
+            `;
+        } else {
+            document.getElementById('invitationStatus').innerHTML = `
+                <div class="alert alert-danger">
+                    ${data.error}
+                </div>
+            `;
+        }
+    } catch (error) {
+        console.error('Error sending invitations:', error);
+        document.getElementById('invitationStatus').innerHTML = `
+            <div class="alert alert-danger">
+                An error occurred while sending invitations
+            </div>
+        `;
     }
 });
 </script>

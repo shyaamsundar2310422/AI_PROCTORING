@@ -28,7 +28,29 @@
         </div>
         
         <div class="col-md-8">
-            <div class="card mb-4">
+            <!-- Pending Invitations Section -->
+            <div class="card mb-4" id="pendingInvitationsCard" style="display: none;">
+                <div class="card-header">
+                    <h5 class="mb-0">Pending Exam Invitations</h5>
+                </div>
+                <div class="card-body">
+                    <div id="pendingInvitationsList"></div>
+                </div>
+            </div>
+
+            <!-- Available Exams Section -->
+            <div class="card mb-4" id="availableExamsCard" style="display: none;">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0">Available Exams</h5>
+                    <button class="btn btn-success" data-bs-toggle="modal" data-bs-target="#demoExamModal">Demo Exam</button>
+                </div>
+                <div class="card-body">
+                    <div id="availableExamsList"></div>
+                </div>
+            </div>
+
+            <!-- Default message when no exams -->
+            <div class="card mb-4" id="noExamsCard">
                 <div class="card-header d-flex justify-content-between align-items-center">
                     <h5 class="mb-0">Upcoming Exams</h5>
                     <button class="btn btn-success" data-bs-toggle="modal" data-bs-target="#demoExamModal">Demo Exam</button>
@@ -92,6 +114,31 @@
   </div>
 </div>
 
+<!-- Accept Invitation Modal -->
+<div class="modal fade" id="acceptInvitationModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Accept Exam Invitation</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div id="invitationDetails"></div>
+        <div class="mb-3">
+          <label for="invitationCode" class="form-label">Invitation Code</label>
+          <input type="text" class="form-control" id="invitationCode" placeholder="Enter invitation code">
+        </div>
+        <div id="invitationStatus"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-primary" id="acceptInvitationBtn">Accept Invitation</button>
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
 {% block scripts %}
 {{ super() }}
 <script>
@@ -109,6 +156,193 @@ const statusLeftEyeDir = document.getElementById('statusLeftEyeDir');
 const statusRightEyeDir = document.getElementById('statusRightEyeDir');
 const statusLeftEyeImg = document.getElementById('statusLeftEyeImg');
 const statusRightEyeImg = document.getElementById('statusRightEyeImg');
+
+// Load dashboard data when page loads
+document.addEventListener('DOMContentLoaded', function() {
+    loadDashboardData();
+});
+
+async function loadDashboardData() {
+    try {
+        // Load pending invitations
+        const invitationsResponse = await fetch('/api/exam/pending-invitations');
+        const invitationsData = await invitationsResponse.json();
+        
+        if (invitationsData.pending_invitations && invitationsData.pending_invitations.length > 0) {
+            displayPendingInvitations(invitationsData.pending_invitations);
+        }
+        
+        // Load available exams
+        const examsResponse = await fetch('/api/exam/available');
+        const examsData = await examsResponse.json();
+        
+        if (examsData.exams && examsData.exams.length > 0) {
+            displayAvailableExams(examsData.exams);
+        }
+        
+        // Show/hide appropriate cards
+        updateCardVisibility();
+    } catch (error) {
+        console.error('Error loading dashboard data:', error);
+    }
+}
+
+function displayPendingInvitations(invitations) {
+    const container = document.getElementById('pendingInvitationsList');
+    const card = document.getElementById('pendingInvitationsCard');
+    
+    if (invitations.length === 0) {
+        card.style.display = 'none';
+        return;
+    }
+    
+    const html = invitations.map(invitation => `
+        <div class="card mb-2">
+            <div class="card-body">
+                <h6 class="card-title">${invitation.exam_title}</h6>
+                <p class="card-text">${invitation.exam_description || 'No description available'}</p>
+                <p class="text-muted small">Invitation Code: <strong>${invitation.invitation_code}</strong></p>
+                <button class="btn btn-primary btn-sm" onclick="showAcceptInvitation('${invitation.exam_title}', '${invitation.invitation_code}')">
+                    Accept Invitation
+                </button>
+            </div>
+        </div>
+    `).join('');
+    
+    container.innerHTML = html;
+    card.style.display = 'block';
+}
+
+function displayAvailableExams(exams) {
+    const container = document.getElementById('availableExamsList');
+    const card = document.getElementById('availableExamsCard');
+    
+    if (exams.length === 0) {
+        card.style.display = 'none';
+        return;
+    }
+    
+    const html = exams.map(exam => {
+        const startTime = new Date(exam.start_time).toLocaleString();
+        const endTime = new Date(exam.end_time).toLocaleString();
+        const now = new Date();
+        const examStart = new Date(exam.start_time);
+        const examEnd = new Date(exam.end_time);
+        
+        let status = 'Upcoming';
+        let statusClass = 'bg-info';
+        
+        if (now >= examStart && now <= examEnd) {
+            status = 'Active';
+            statusClass = 'bg-success';
+        } else if (now > examEnd) {
+            status = 'Completed';
+            statusClass = 'bg-secondary';
+        }
+        
+        return `
+            <div class="card mb-2">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-start">
+                        <div>
+                            <h6 class="card-title">${exam.title}</h6>
+                            <p class="card-text">${exam.description || 'No description available'}</p>
+                            <p class="text-muted small">
+                                <strong>Duration:</strong> ${exam.duration} minutes<br>
+                                <strong>Total Marks:</strong> ${exam.total_marks}<br>
+                                <strong>Start:</strong> ${startTime}<br>
+                                <strong>End:</strong> ${endTime}
+                            </p>
+                        </div>
+                        <span class="badge ${statusClass}">${status}</span>
+                    </div>
+                    ${now >= examStart && now <= examEnd ? 
+                        `<button class="btn btn-success btn-sm" onclick="startExam(${exam.id})">Start Exam</button>` : 
+                        ''
+                    }
+                </div>
+            </div>
+        `;
+    }).join('');
+    
+    container.innerHTML = html;
+    card.style.display = 'block';
+}
+
+function updateCardVisibility() {
+    const pendingCard = document.getElementById('pendingInvitationsCard');
+    const availableCard = document.getElementById('availableExamsCard');
+    const noExamsCard = document.getElementById('noExamsCard');
+    
+    const hasPending = pendingCard.style.display !== 'none';
+    const hasAvailable = availableCard.style.display !== 'none';
+    
+    if (!hasPending && !hasAvailable) {
+        noExamsCard.style.display = 'block';
+    } else {
+        noExamsCard.style.display = 'none';
+    }
+}
+
+function showAcceptInvitation(examTitle, invitationCode) {
+    document.getElementById('invitationDetails').innerHTML = `
+        <div class="alert alert-info">
+            <strong>Exam:</strong> ${examTitle}<br>
+            <strong>Code:</strong> ${invitationCode}
+        </div>
+    `;
+    document.getElementById('invitationCode').value = invitationCode;
+    document.getElementById('invitationStatus').innerHTML = '';
+    new bootstrap.Modal(document.getElementById('acceptInvitationModal')).show();
+}
+
+document.getElementById('acceptInvitationBtn').addEventListener('click', async function() {
+    const invitationCode = document.getElementById('invitationCode').value.trim();
+    
+    if (!invitationCode) {
+        document.getElementById('invitationStatus').innerHTML = `
+            <div class="alert alert-danger">Please enter an invitation code</div>
+        `;
+        return;
+    }
+    
+    try {
+        const response = await fetch('/api/exam/accept-invitation', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ invitation_code: invitationCode })
+        });
+        
+        const data = await response.json();
+        
+        if (response.ok) {
+            document.getElementById('invitationStatus').innerHTML = `
+                <div class="alert alert-success">${data.message}</div>
+            `;
+            // Reload dashboard data after successful acceptance
+            setTimeout(() => {
+                bootstrap.Modal.getInstance(document.getElementById('acceptInvitationModal')).hide();
+                loadDashboardData();
+            }, 1500);
+        } else {
+            document.getElementById('invitationStatus').innerHTML = `
+                <div class="alert alert-danger">${data.error}</div>
+            `;
+        }
+    } catch (error) {
+        console.error('Error accepting invitation:', error);
+        document.getElementById('invitationStatus').innerHTML = `
+            <div class="alert alert-danger">An error occurred while accepting the invitation</div>
+        `;
+    }
+});
+
+function startExam(examId) {
+    // Redirect to exam interface
+    window.location.href = `/exam/${examId}`;
+}
 
 // Open webcam when modal is shown
 const demoExamModal = document.getElementById('demoExamModal');
@@ -208,5 +442,4 @@ function stopLiveProctoring() {
     }
 }
 </script>
-{% endblock %}
 {% endblock %} 

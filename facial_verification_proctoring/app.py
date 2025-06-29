@@ -4,7 +4,7 @@ from flask_login import LoginManager, UserMixin, login_user, login_required, log
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_cors import CORS
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from proctoring_system import ProctoringSystem
 from dotenv import load_dotenv
 from functools import wraps
@@ -16,6 +16,9 @@ import cv2
 import pickle
 import traceback
 from proctoring_face_analyzer import analyze_frame
+import uuid
+import re
+from werkzeug.utils import secure_filename
 
 # Load environment variables
 load_dotenv()
@@ -30,6 +33,10 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['UPLOAD_FOLDER'] = 'static/uploads'
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
 
+# File upload configuration
+ALLOWED_EXTENSIONS = {'pdf', 'doc', 'docx', 'txt'}
+EXAM_FILES_FOLDER = 'static/uploads/exam_files'
+
 db = SQLAlchemy(app)
 login_manager = LoginManager()
 login_manager.init_app(app)
@@ -40,6 +47,7 @@ proctoring_system = ProctoringSystem()
 
 # Ensure upload directory exists
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+os.makedirs(EXAM_FILES_FOLDER, exist_ok=True)
 
 # Database Models
 class User(UserMixin, db.Model):
@@ -109,6 +117,30 @@ class ExamSession(db.Model):
     start_time = db.Column(db.DateTime, nullable=False)
     end_time = db.Column(db.DateTime)
     anomalies = db.Column(db.Text)  # Store anomalies as JSON string
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+class ExamFile(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    exam_id = db.Column(db.Integer, db.ForeignKey('exam.id'), nullable=False)
+    file_type = db.Column(db.String(20), nullable=False)  # 'question_paper', 'keywords'
+    file_path = db.Column(db.String(500), nullable=False)
+    original_filename = db.Column(db.String(200), nullable=False)
+    uploaded_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+class ExamKeyword(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    exam_id = db.Column(db.Integer, db.ForeignKey('exam.id'), nullable=False)
+    keyword = db.Column(db.String(100), nullable=False)
+    weight = db.Column(db.Float, default=1.0)  # Importance weight for the keyword
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+class StudentInvitation(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    exam_id = db.Column(db.Integer, db.ForeignKey('exam.id'), nullable=False)
+    student_email = db.Column(db.String(120), nullable=False)
+    invitation_code = db.Column(db.String(50), unique=True, nullable=False)
+    is_accepted = db.Column(db.Boolean, default=False)
+    accepted_at = db.Column(db.DateTime)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 @login_manager.user_loader
@@ -729,15 +761,660 @@ def demo_exam_status():
 
 @app.route('/api/proctoring/analyze', methods=['POST'])
 def proctoring_analyze():
-    data = request.get_json()
-    image_b64 = data.get('image')
-    if not image_b64:
-        return jsonify({'error': 'No image provided'}), 400
-    img_bytes = base64.b64decode(image_b64)
-    nparr = np.frombuffer(img_bytes, np.uint8)
-    frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-    status = analyze_frame(frame)
-    return jsonify(status)
+    try:
+        data = request.get_json()
+        image_data = data.get('image')
+        
+        if not image_data:
+            return jsonify({'error': 'No image data provided'}), 400
+        
+        # Decode base64 image
+        image_data = image_data.split(',')[1] if ',' in image_data else image_data
+        image_bytes = base64.b64decode(image_data)
+        
+        # Convert to numpy array
+        nparr = np.frombuffer(image_bytes, np.uint8)
+        frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        
+        # Analyze frame
+        result = analyze_frame(frame)
+        
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+# New API routes for exam creation and management
+@app.route('/api/exam/create', methods=['POST'])
+@login_required
+def create_exam():
+    if current_user.role != 'faculty':
+        return jsonify({'error': 'Unauthorized'}), 403
+    
+    try:
+        data = request.get_json()
+        
+        # Create exam
+        exam = Exam(
+            title=data['title'],
+            description=data.get('description', ''),
+            start_time=datetime.fromisoformat(data['start_time'].replace('Z', '+00:00')),
+            end_time=datetime.fromisoformat(data['end_time'].replace('Z', '+00:00')),
+            duration=data['duration'],
+            total_marks=data['total_marks'],
+            created_by=current_user.id
+        )
+        
+        db.session.add(exam)
+        db.session.commit()
+        
+        return jsonify({
+            'success': True,
+            'exam_id': exam.id,
+            'message': 'Exam created successfully'
+        })
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/exam/<int:exam_id>/upload-file', methods=['POST'])
+@login_required
+def upload_exam_file(exam_id):
+    if current_user.role != 'faculty':
+        return jsonify({'error': 'Unauthorized'}), 403
+    
+    exam = Exam.query.get_or_404(exam_id)
+    if exam.created_by != current_user.id:
+        return jsonify({'error': 'Unauthorized'}), 403
+    
+    try:
+        if 'file' not in request.files:
+            return jsonify({'error': 'No file provided'}), 400
+        
+        file = request.files['file']
+        file_type = request.form.get('file_type', 'question_paper')
+        
+        if file.filename == '':
+            return jsonify({'error': 'No file selected'}), 400
+        
+        if not allowed_file(file.filename):
+            return jsonify({'error': 'File type not allowed'}), 400
+        
+        # Save file
+        filename = secure_filename(file.filename)
+        unique_filename = f"{exam_id}_{file_type}_{uuid.uuid4().hex}_{filename}"
+        file_path = os.path.join(EXAM_FILES_FOLDER, unique_filename)
+        file.save(file_path)
+        
+        # Create exam file record
+        exam_file = ExamFile(
+            exam_id=exam_id,
+            file_type=file_type,
+            file_path=file_path,
+            original_filename=filename
+        )
+        
+        db.session.add(exam_file)
+        db.session.commit()
+        
+        # Extract text and keywords if it's a question paper
+        extracted_keywords = []
+        if file_type == 'question_paper':
+            file_extension = filename.rsplit('.', 1)[1].lower()
+            if file_extension == 'pdf':
+                text = extract_text_from_pdf(file_path)
+            elif file_extension == 'docx':
+                text = extract_text_from_docx(file_path)
+            else:
+                # For txt files, read directly
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    text = f.read()
+            
+            # Extract keywords
+            extracted_keywords = extract_keywords_from_text(text)
+        
+        return jsonify({
+            'success': True,
+            'file_id': exam_file.id,
+            'extracted_keywords': extracted_keywords,
+            'message': 'File uploaded successfully'
+        })
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/exam/<int:exam_id>/keywords', methods=['POST'])
+@login_required
+def save_exam_keywords(exam_id):
+    if current_user.role != 'faculty':
+        return jsonify({'error': 'Unauthorized'}), 403
+    
+    exam = Exam.query.get_or_404(exam_id)
+    if exam.created_by != current_user.id:
+        return jsonify({'error': 'Unauthorized'}), 403
+    
+    try:
+        data = request.get_json()
+        keywords = data.get('keywords', [])
+        
+        # Clear existing keywords
+        ExamKeyword.query.filter_by(exam_id=exam_id).delete()
+        
+        # Add new keywords
+        for keyword_data in keywords:
+            keyword = ExamKeyword(
+                exam_id=exam_id,
+                keyword=keyword_data['keyword'],
+                weight=keyword_data.get('weight', 1.0)
+            )
+            db.session.add(keyword)
+        
+        db.session.commit()
+        
+        return jsonify({
+            'success': True,
+            'message': 'Keywords saved successfully'
+        })
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/exam/<int:exam_id>/invite-students', methods=['POST'])
+@login_required
+def invite_students(exam_id):
+    if current_user.role != 'faculty':
+        return jsonify({'error': 'Unauthorized'}), 403
+    
+    exam = Exam.query.get_or_404(exam_id)
+    if exam.created_by != current_user.id:
+        return jsonify({'error': 'Unauthorized'}), 403
+    
+    try:
+        data = request.get_json()
+        student_emails = data.get('student_emails', [])
+        
+        invitations = []
+        for email in student_emails:
+            # Check if invitation already exists
+            existing_invitation = StudentInvitation.query.filter_by(
+                exam_id=exam_id, 
+                student_email=email
+            ).first()
+            
+            if not existing_invitation:
+                invitation = StudentInvitation(
+                    exam_id=exam_id,
+                    student_email=email,
+                    invitation_code=uuid.uuid4().hex[:12].upper()
+                )
+                db.session.add(invitation)
+                invitations.append(invitation)
+        
+        db.session.commit()
+        
+        return jsonify({
+            'success': True,
+            'invitations_created': len(invitations),
+            'message': f'Invitations sent to {len(invitations)} students'
+        })
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/exam/<int:exam_id>/invitations', methods=['GET'])
+@login_required
+def get_exam_invitations(exam_id):
+    if current_user.role != 'faculty':
+        return jsonify({'error': 'Unauthorized'}), 403
+    
+    exam = Exam.query.get_or_404(exam_id)
+    if exam.created_by != current_user.id:
+        return jsonify({'error': 'Unauthorized'}), 403
+    
+    invitations = StudentInvitation.query.filter_by(exam_id=exam_id).all()
+    
+    return jsonify({
+        'invitations': [{
+            'id': inv.id,
+            'student_email': inv.student_email,
+            'invitation_code': inv.invitation_code,
+            'is_accepted': inv.is_accepted,
+            'accepted_at': inv.accepted_at.replace(tzinfo=timezone.utc).isoformat() if inv.accepted_at else None,
+            'created_at': inv.created_at.replace(tzinfo=timezone.utc).isoformat(),
+            'start_time': exam.start_time.replace(tzinfo=timezone.utc).isoformat(),
+            'end_time': exam.end_time.replace(tzinfo=timezone.utc).isoformat(),
+        } for inv in invitations]
+    })
+
+@app.route('/api/exam/<int:exam_id>/files', methods=['GET'])
+@login_required
+def get_exam_files(exam_id):
+    if current_user.role != 'faculty':
+        return jsonify({'error': 'Unauthorized'}), 403
+    
+    exam = Exam.query.get_or_404(exam_id)
+    if exam.created_by != current_user.id:
+        return jsonify({'error': 'Unauthorized'}), 403
+    
+    files = ExamFile.query.filter_by(exam_id=exam_id).all()
+    
+    return jsonify({
+        'files': [{
+            'id': file.id,
+            'file_type': file.file_type,
+            'original_filename': file.original_filename,
+            'uploaded_at': file.uploaded_at.isoformat()
+        } for file in files]
+    })
+
+@app.route('/api/exam/<int:exam_id>/keywords', methods=['GET'])
+@login_required
+def get_exam_keywords(exam_id):
+    if current_user.role != 'faculty':
+        return jsonify({'error': 'Unauthorized'}), 403
+    
+    exam = Exam.query.get_or_404(exam_id)
+    if exam.created_by != current_user.id:
+        return jsonify({'error': 'Unauthorized'}), 403
+    
+    keywords = ExamKeyword.query.filter_by(exam_id=exam_id).all()
+    
+    return jsonify({
+        'keywords': [{
+            'id': kw.id,
+            'keyword': kw.keyword,
+            'weight': kw.weight
+        } for kw in keywords]
+    })
+
+@app.route('/api/exam/accept-invitation', methods=['POST'])
+@login_required
+def accept_exam_invitation():
+    if current_user.role != 'student':
+        return jsonify({'error': 'Unauthorized'}), 403
+    
+    try:
+        data = request.get_json()
+        invitation_code = data.get('invitation_code')
+        
+        if not invitation_code:
+            return jsonify({'error': 'Invitation code is required'}), 400
+        
+        # Find invitation
+        invitation = StudentInvitation.query.filter_by(
+            invitation_code=invitation_code,
+            student_email=current_user.email
+        ).first()
+        
+        if not invitation:
+            return jsonify({'error': 'Invalid invitation code or email mismatch'}), 404
+        
+        if invitation.is_accepted:
+            return jsonify({'error': 'Invitation already accepted'}), 400
+        
+        # Accept invitation
+        invitation.is_accepted = True
+        invitation.accepted_at = datetime.utcnow()
+        db.session.commit()
+        
+        return jsonify({
+            'success': True,
+            'message': 'Invitation accepted successfully',
+            'exam_id': invitation.exam_id
+        })
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/exam/available', methods=['GET'])
+@login_required
+def get_available_exams():
+    if current_user.role != 'student':
+        return jsonify({'error': 'Unauthorized'}), 403
+    
+    try:
+        # Get exams where student has accepted invitation
+        accepted_invitations = StudentInvitation.query.filter_by(
+            student_email=current_user.email,
+            is_accepted=True
+        ).all()
+        
+        exam_ids = [inv.exam_id for inv in accepted_invitations]
+        exams = Exam.query.filter(Exam.id.in_(exam_ids)).all()
+        
+        return jsonify({
+            'exams': [{
+                'id': exam.id,
+                'title': exam.title,
+                'description': exam.description,
+                'start_time': exam.start_time.replace(tzinfo=timezone.utc).isoformat(),
+                'end_time': exam.end_time.replace(tzinfo=timezone.utc).isoformat(),
+                'duration': exam.duration,
+                'total_marks': exam.total_marks
+            } for exam in exams]
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/exam/pending-invitations', methods=['GET'])
+@login_required
+def get_pending_invitations():
+    if current_user.role != 'student':
+        return jsonify({'error': 'Unauthorized'}), 403
+    
+    try:
+        # Get pending invitations for the student
+        pending_invitations = StudentInvitation.query.filter_by(
+            student_email=current_user.email,
+            is_accepted=False
+        ).all()
+        
+        invitations_with_exam = []
+        for invitation in pending_invitations:
+            exam = Exam.query.get(invitation.exam_id)
+            if exam:
+                invitations_with_exam.append({
+                    'invitation_id': invitation.id,
+                    'invitation_code': invitation.invitation_code,
+                    'exam_id': exam.id,
+                    'exam_title': exam.title,
+                    'exam_description': exam.description,
+                    'created_at': invitation.created_at.replace(tzinfo=timezone.utc).isoformat(),
+                    'start_time': exam.start_time.replace(tzinfo=timezone.utc).isoformat(),
+                    'end_time': exam.end_time.replace(tzinfo=timezone.utc).isoformat(),
+                })
+        
+        return jsonify({
+            'pending_invitations': invitations_with_exam
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/exam/<int:exam_id>/start', methods=['POST'])
+@login_required
+def start_exam_session(exam_id):
+    if current_user.role != 'student':
+        return jsonify({'error': 'Unauthorized'}), 403
+    
+    try:
+        # Check if student has access to this exam
+        invitation = StudentInvitation.query.filter_by(
+            exam_id=exam_id,
+            student_email=current_user.email,
+            is_accepted=True
+        ).first()
+        
+        if not invitation:
+            return jsonify({'error': 'No access to this exam'}), 403
+        
+        # Check if exam is currently active
+        exam = Exam.query.get_or_404(exam_id)
+        now = datetime.utcnow()
+        
+        if now < exam.start_time:
+            return jsonify({'error': 'Exam has not started yet'}), 400
+        
+        if now > exam.end_time:
+            return jsonify({'error': 'Exam has ended'}), 400
+        
+        # Check if student already has an active session
+        active_session = ExamSession.query.filter_by(
+            user_id=current_user.id,
+            exam_id=exam_id,
+            end_time=None
+        ).first()
+        
+        if active_session:
+            return jsonify({'error': 'You already have an active session for this exam'}), 400
+        
+        # Create new exam session
+        session = ExamSession(
+            user_id=current_user.id,
+            exam_id=exam_id,
+            start_time=now
+        )
+        db.session.add(session)
+        db.session.commit()
+        
+        return jsonify({
+            'success': True,
+            'session_id': session.id,
+            'message': 'Exam session started successfully'
+        })
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/exam/<int:exam_id>/question-paper', methods=['GET'])
+@login_required
+def get_exam_question_paper(exam_id):
+    if current_user.role != 'student':
+        return jsonify({'error': 'Unauthorized'}), 403
+    
+    try:
+        # Check if student has access to this exam
+        invitation = StudentInvitation.query.filter_by(
+            exam_id=exam_id,
+            student_email=current_user.email,
+            is_accepted=True
+        ).first()
+        
+        if not invitation:
+            return jsonify({'error': 'No access to this exam'}), 403
+        
+        # Get question paper file
+        question_file = ExamFile.query.filter_by(
+            exam_id=exam_id,
+            file_type='question_paper'
+        ).first()
+        
+        if not question_file:
+            return jsonify({'error': 'Question paper not found'}), 404
+        
+        # Read file content based on type
+        file_extension = question_file.original_filename.rsplit('.', 1)[1].lower()
+        
+        if file_extension == 'pdf':
+            text = extract_text_from_pdf(question_file.file_path)
+        elif file_extension == 'docx':
+            text = extract_text_from_docx(question_file.file_path)
+        else:
+            # For txt files, read directly
+            with open(question_file.file_path, 'r', encoding='utf-8') as f:
+                text = f.read()
+        
+        return jsonify({
+            'success': True,
+            'question_paper': text,
+            'filename': question_file.original_filename,
+            'file_type': file_extension
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/exam/<int:exam_id>/submit-answer', methods=['POST'])
+@login_required
+def submit_exam_answer(exam_id):
+    if current_user.role != 'student':
+        return jsonify({'error': 'Unauthorized'}), 403
+    
+    try:
+        data = request.get_json()
+        answer_text = data.get('answer_text', '')
+        
+        # Check if student has an active session
+        active_session = ExamSession.query.filter_by(
+            user_id=current_user.id,
+            exam_id=exam_id,
+            end_time=None
+        ).first()
+        
+        if not active_session:
+            return jsonify({'error': 'No active exam session'}), 400
+        
+        # Create answer record
+        answer = Answer(
+            exam_id=exam_id,
+            question_id=1,  # For now, we'll use a single question per exam
+            student_id=current_user.id,
+            answer_text=answer_text
+        )
+        db.session.add(answer)
+        db.session.commit()
+        
+        return jsonify({
+            'success': True,
+            'message': 'Answer submitted successfully'
+        })
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/exam/<int:exam_id>/end', methods=['POST'])
+@login_required
+def end_exam_session(exam_id):
+    if current_user.role != 'student':
+        return jsonify({'error': 'Unauthorized'}), 403
+    
+    try:
+        # Find active session
+        active_session = ExamSession.query.filter_by(
+            user_id=current_user.id,
+            exam_id=exam_id,
+            end_time=None
+        ).first()
+        
+        if not active_session:
+            return jsonify({'error': 'No active exam session'}), 400
+        
+        # End session
+        active_session.end_time = datetime.utcnow()
+        db.session.commit()
+        
+        return jsonify({
+            'success': True,
+            'message': 'Exam session ended successfully'
+        })
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/exam/<int:exam_id>/session-status', methods=['GET'])
+@login_required
+def get_exam_session_status(exam_id):
+    if current_user.role != 'student':
+        return jsonify({'error': 'Unauthorized'}), 403
+    
+    try:
+        # Check if student has access to this exam
+        invitation = StudentInvitation.query.filter_by(
+            exam_id=exam_id,
+            student_email=current_user.email,
+            is_accepted=True
+        ).first()
+        
+        if not invitation:
+            return jsonify({'error': 'No access to this exam'}), 403
+        
+        # Get active session
+        active_session = ExamSession.query.filter_by(
+            user_id=current_user.id,
+            exam_id=exam_id,
+            end_time=None
+        ).first()
+        
+        if active_session:
+            return jsonify({
+                'has_active_session': True,
+                'session_id': active_session.id,
+                'start_time': active_session.start_time.isoformat()
+            })
+        else:
+            return jsonify({
+                'has_active_session': False
+            })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/exam/<int:exam_id>')
+@login_required
+def exam_interface(exam_id):
+    if current_user.role != 'student':
+        return redirect(url_for('dashboard'))
+    
+    try:
+        # Check if student has access to this exam
+        invitation = StudentInvitation.query.filter_by(
+            exam_id=exam_id,
+            student_email=current_user.email,
+            is_accepted=True
+        ).first()
+        
+        if not invitation:
+            flash('You do not have access to this exam')
+            return redirect(url_for('dashboard'))
+        
+        # Get exam details
+        exam = Exam.query.get_or_404(exam_id)
+        
+        # Check if exam is currently active
+        now = datetime.utcnow()
+        if now < exam.start_time:
+            flash('This exam has not started yet')
+            return redirect(url_for('dashboard'))
+        
+        if now > exam.end_time:
+            flash('This exam has ended')
+            return redirect(url_for('dashboard'))
+        
+        return render_template('exam_interface.html', exam=exam)
+    except Exception as e:
+        flash('Error accessing exam')
+        return redirect(url_for('dashboard'))
+
+def allowed_file(filename):
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+def extract_text_from_pdf(file_path):
+    """Extract text from PDF file"""
+    try:
+        import PyPDF2
+        with open(file_path, 'rb') as file:
+            pdf_reader = PyPDF2.PdfReader(file)
+            text = ""
+            for page in pdf_reader.pages:
+                text += page.extract_text()
+        return text
+    except ImportError:
+        return "PyPDF2 not installed. Please install it to process PDF files."
+    except Exception as e:
+        return f"Error reading PDF: {str(e)}"
+
+def extract_text_from_docx(file_path):
+    """Extract text from DOCX file"""
+    try:
+        from docx import Document
+        doc = Document(file_path)
+        text = ""
+        for paragraph in doc.paragraphs:
+            text += paragraph.text + "\n"
+        return text
+    except ImportError:
+        return "python-docx not installed. Please install it to process DOCX files."
+    except Exception as e:
+        return f"Error reading DOCX: {str(e)}"
+
+def extract_keywords_from_text(text):
+    """Extract potential keywords from text"""
+    # Simple keyword extraction - can be enhanced with NLP
+    words = re.findall(r'\b[a-zA-Z]{3,}\b', text.lower())
+    word_freq = {}
+    for word in words:
+        if word not in ['the', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by', 'is', 'are', 'was', 'were', 'be', 'been', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could', 'should', 'may', 'might', 'can', 'this', 'that', 'these', 'those', 'a', 'an']:
+            word_freq[word] = word_freq.get(word, 0) + 1
+    
+    # Return top 20 most frequent words as potential keywords
+    sorted_words = sorted(word_freq.items(), key=lambda x: x[1], reverse=True)
+    return [word for word, freq in sorted_words[:20]]
 
 if __name__ == '__main__':
     init_db()  # Initialize database and create admin account

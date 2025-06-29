@@ -1,0 +1,438 @@
+{% extends "base.html" %}
+
+{% block title %}Exam Interface{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row">
+        <!-- Exam Header -->
+        <div class="col-12">
+            <div class="card mb-3">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h4 class="mb-0">{{ exam.title }}</h4>
+                    <div>
+                        <span class="badge bg-primary me-2" id="timer">Time Remaining: --:--</span>
+                        <button class="btn btn-danger" id="endExamBtn">End Exam</button>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-6">
+                            <strong>Duration:</strong> {{ exam.duration }} minutes<br>
+                            <strong>Total Marks:</strong> {{ exam.total_marks }}
+                        </div>
+                        <div class="col-md-6 text-end">
+                            <strong>Started:</strong> <span id="startTime">--</span><br>
+                            <strong>Ends:</strong> {{ exam.end_time.strftime('%Y-%m-%d %H:%M') }}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main Content -->
+        <div class="col-md-8">
+            <!-- Question Paper -->
+            <div class="card mb-3">
+                <div class="card-header">
+                    <h5 class="mb-0">Question Paper</h5>
+                </div>
+                <div class="card-body">
+                    <div id="questionPaper" style="max-height: 400px; overflow-y: auto; border: 1px solid #ddd; padding: 15px; background-color: #f9f9f9;">
+                        <div class="text-center text-muted">
+                            <i class="fas fa-spinner fa-spin"></i> Loading question paper...
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Answer Section -->
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0">Your Answer</h5>
+                </div>
+                <div class="card-body">
+                    <div class="mb-3">
+                        <label for="answerText" class="form-label">Write your answer below:</label>
+                        <textarea class="form-control" id="answerText" rows="10" placeholder="Type your answer here..."></textarea>
+                    </div>
+                    <div class="d-flex justify-content-between">
+                        <button class="btn btn-primary" id="saveAnswerBtn">Save Answer</button>
+                        <button class="btn btn-success" id="submitAnswerBtn">Submit Answer</button>
+                    </div>
+                    <div id="answerStatus" class="mt-3"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Proctoring Panel -->
+        <div class="col-md-4">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0">Proctoring Status</h5>
+                </div>
+                <div class="card-body">
+                    <div class="text-center mb-3">
+                        <video id="proctoringVideo" width="320" height="240" autoplay playsinline style="border:1px solid #ccc;"></video>
+                        <canvas id="proctoringCanvas" width="320" height="240" style="display:none;"></canvas>
+                    </div>
+                    
+                    <div class="proctoring-status">
+                        <div class="mb-2">
+                            <strong>Faces Detected:</strong> <span id="proctoringFaces">-</span>
+                        </div>
+                        <div class="mb-2">
+                            <strong>Head Pose:</strong> <span id="proctoringHeadPose">-</span>
+                        </div>
+                        <div class="mb-2">
+                            <strong>Left Eye:</strong> <span id="proctoringLeftEye">-</span>
+                        </div>
+                        <div class="mb-2">
+                            <strong>Right Eye:</strong> <span id="proctoringRightEye">-</span>
+                        </div>
+                    </div>
+                    
+                    <div class="mt-3">
+                        <div class="d-flex">
+                            <div class="me-2 text-center">
+                                <div style="font-size:0.8em;">Left Eye</div>
+                                <img id="proctoringLeftEyeImg" src="" width="60" height="36" style="border:1px solid #ccc;object-fit:cover;"/>
+                            </div>
+                            <div class="text-center">
+                                <div style="font-size:0.8em;">Right Eye</div>
+                                <img id="proctoringRightEyeImg" src="" width="60" height="36" style="border:1px solid #ccc;object-fit:cover;"/>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div id="proctoringAlerts" class="mt-3"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- End Exam Confirmation Modal -->
+<div class="modal fade" id="endExamModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">End Exam</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p>Are you sure you want to end this exam? This action cannot be undone.</p>
+                <p><strong>Note:</strong> Your answers will be saved automatically.</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-danger" id="confirmEndExamBtn">End Exam</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+let examId = {{ exam.id }};
+let examDuration = {{ exam.duration }}; // in minutes
+let examEndTime = new Date('{{ exam.end_time.isoformat() }}');
+let sessionId = null;
+let proctoringStream = null;
+let proctoringInterval = null;
+let timerInterval = null;
+let examStartTime = null;
+
+// DOM elements
+const timerElement = document.getElementById('timer');
+const startTimeElement = document.getElementById('startTime');
+const questionPaperElement = document.getElementById('questionPaper');
+const answerTextElement = document.getElementById('answerText');
+const saveAnswerBtn = document.getElementById('saveAnswerBtn');
+const submitAnswerBtn = document.getElementById('submitAnswerBtn');
+const answerStatusElement = document.getElementById('answerStatus');
+const endExamBtn = document.getElementById('endExamBtn');
+const proctoringVideo = document.getElementById('proctoringVideo');
+const proctoringCanvas = document.getElementById('proctoringCanvas');
+
+// Initialize exam
+async function initializeExam() {
+    try {
+        // Start exam session
+        const response = await fetch(`/api/exam/${examId}/start`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
+        
+        const data = await response.json();
+        
+        if (response.ok) {
+            sessionId = data.session_id;
+            examStartTime = new Date();
+            startTimeElement.textContent = examStartTime.toLocaleTimeString();
+            
+            // Load question paper
+            await loadQuestionPaper();
+            
+            // Start proctoring
+            startProctoring();
+            
+            // Start timer
+            startTimer();
+            
+            // Auto-save every 30 seconds
+            setInterval(autoSaveAnswer, 30000);
+            
+        } else {
+            alert('Error starting exam: ' + data.error);
+            window.location.href = '/dashboard';
+        }
+    } catch (error) {
+        console.error('Error initializing exam:', error);
+        alert('Error starting exam. Please try again.');
+        window.location.href = '/dashboard';
+    }
+}
+
+async function loadQuestionPaper() {
+    try {
+        const response = await fetch(`/api/exam/${examId}/question-paper`);
+        const data = await response.json();
+        
+        if (response.ok) {
+            questionPaperElement.innerHTML = `
+                <div style="white-space: pre-wrap; font-family: 'Courier New', monospace;">
+                    ${data.question_paper}
+                </div>
+            `;
+        } else {
+            questionPaperElement.innerHTML = `
+                <div class="alert alert-danger">
+                    Error loading question paper: ${data.error}
+                </div>
+            `;
+        }
+    } catch (error) {
+        console.error('Error loading question paper:', error);
+        questionPaperElement.innerHTML = `
+            <div class="alert alert-danger">
+                Error loading question paper. Please refresh the page.
+            </div>
+        `;
+    }
+}
+
+function startTimer() {
+    timerInterval = setInterval(() => {
+        const now = new Date();
+        const timeLeft = examEndTime - now;
+        
+        if (timeLeft <= 0) {
+            clearInterval(timerInterval);
+            timerElement.textContent = 'Time Expired';
+            timerElement.className = 'badge bg-danger me-2';
+            endExam();
+        } else {
+            const minutes = Math.floor(timeLeft / 60000);
+            const seconds = Math.floor((timeLeft % 60000) / 1000);
+            timerElement.textContent = `Time Remaining: ${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+            
+            // Warning when less than 5 minutes left
+            if (timeLeft < 300000) { // 5 minutes
+                timerElement.className = 'badge bg-warning me-2';
+            }
+        }
+    }, 1000);
+}
+
+async function saveAnswer() {
+    const answerText = answerTextElement.value.trim();
+    
+    if (!answerText) {
+        answerStatusElement.innerHTML = '<div class="alert alert-warning">Please enter an answer before saving.</div>';
+        return;
+    }
+    
+    try {
+        const response = await fetch(`/api/exam/${examId}/submit-answer`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ answer_text: answerText })
+        });
+        
+        const data = await response.json();
+        
+        if (response.ok) {
+            answerStatusElement.innerHTML = '<div class="alert alert-success">Answer saved successfully!</div>';
+            setTimeout(() => {
+                answerStatusElement.innerHTML = '';
+            }, 3000);
+        } else {
+            answerStatusElement.innerHTML = `<div class="alert alert-danger">Error saving answer: ${data.error}</div>`;
+        }
+    } catch (error) {
+        console.error('Error saving answer:', error);
+        answerStatusElement.innerHTML = '<div class="alert alert-danger">Error saving answer. Please try again.</div>';
+    }
+}
+
+async function autoSaveAnswer() {
+    const answerText = answerTextElement.value.trim();
+    if (answerText) {
+        await saveAnswer();
+    }
+}
+
+async function startProctoring() {
+    try {
+        if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+            proctoringStream = await navigator.mediaDevices.getUserMedia({ video: true });
+            proctoringVideo.srcObject = proctoringStream;
+            
+            // Start proctoring analysis
+            proctoringInterval = setInterval(async () => {
+                proctoringCanvas.getContext('2d').drawImage(proctoringVideo, 0, 0, proctoringCanvas.width, proctoringCanvas.height);
+                const dataUrl = proctoringCanvas.toDataURL('image/jpeg');
+                const base64 = dataUrl.split(',')[1];
+                
+                try {
+                    const response = await fetch('/api/proctoring/analyze', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ image: base64 })
+                    });
+                    
+                    const status = await response.json();
+                    
+                    // Update proctoring status
+                    document.getElementById('proctoringFaces').textContent = status.num_faces;
+                    document.getElementById('proctoringHeadPose').textContent = status.head_pose;
+                    document.getElementById('proctoringLeftEye').textContent = status.left_eye_dir;
+                    document.getElementById('proctoringRightEye').textContent = status.right_eye_dir;
+                    
+                    if (status.left_eye_img) {
+                        document.getElementById('proctoringLeftEyeImg').src = `data:image/jpeg;base64,${status.left_eye_img}`;
+                    }
+                    if (status.right_eye_img) {
+                        document.getElementById('proctoringRightEyeImg').src = `data:image/jpeg;base64,${status.right_eye_img}`;
+                    }
+                    
+                    // Check for anomalies
+                    checkProctoringAnomalies(status);
+                    
+                } catch (err) {
+                    console.error('Proctoring analysis error:', err);
+                }
+            }, 2000); // Check every 2 seconds
+        }
+    } catch (error) {
+        console.error('Error starting proctoring:', error);
+        document.getElementById('proctoringAlerts').innerHTML = `
+            <div class="alert alert-warning">
+                Could not access camera for proctoring. Please ensure camera permissions are granted.
+            </div>
+        `;
+    }
+}
+
+function checkProctoringAnomalies(status) {
+    const alertsElement = document.getElementById('proctoringAlerts');
+    let alerts = [];
+    
+    if (status.num_faces === 0) {
+        alerts.push('No face detected');
+    } else if (status.num_faces > 1) {
+        alerts.push('Multiple faces detected');
+    }
+    
+    if (status.head_pose !== 'Center') {
+        alerts.push(`Head turned ${status.head_pose.toLowerCase()}`);
+    }
+    
+    if (status.left_eye_dir !== 'Center' && status.left_eye_dir !== 'N/A') {
+        alerts.push(`Left eye looking ${status.left_eye_dir.toLowerCase()}`);
+    }
+    
+    if (status.right_eye_dir !== 'Center' && status.right_eye_dir !== 'N/A') {
+        alerts.push(`Right eye looking ${status.right_eye_dir.toLowerCase()}`);
+    }
+    
+    if (alerts.length > 0) {
+        alertsElement.innerHTML = `
+            <div class="alert alert-warning">
+                <strong>Proctoring Alerts:</strong><br>
+                ${alerts.join('<br>')}
+            </div>
+        `;
+    } else {
+        alertsElement.innerHTML = '';
+    }
+}
+
+async function endExam() {
+    try {
+        // Save current answer
+        await saveAnswer();
+        
+        // End exam session
+        const response = await fetch(`/api/exam/${examId}/end`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
+        
+        const data = await response.json();
+        
+        if (response.ok) {
+            alert('Exam ended successfully!');
+            window.location.href = '/dashboard';
+        } else {
+            alert('Error ending exam: ' + data.error);
+        }
+    } catch (error) {
+        console.error('Error ending exam:', error);
+        alert('Error ending exam. Please try again.');
+    }
+}
+
+function stopProctoring() {
+    if (proctoringStream) {
+        proctoringStream.getTracks().forEach(track => track.stop());
+        proctoringStream = null;
+    }
+    if (proctoringInterval) {
+        clearInterval(proctoringInterval);
+        proctoringInterval = null;
+    }
+}
+
+// Event listeners
+saveAnswerBtn.addEventListener('click', saveAnswer);
+submitAnswerBtn.addEventListener('click', saveAnswer);
+
+endExamBtn.addEventListener('click', () => {
+    new bootstrap.Modal(document.getElementById('endExamModal')).show();
+});
+
+document.getElementById('confirmEndExamBtn').addEventListener('click', () => {
+    bootstrap.Modal.getInstance(document.getElementById('endExamModal')).hide();
+    endExam();
+});
+
+// Handle page unload
+window.addEventListener('beforeunload', (e) => {
+    if (sessionId) {
+        e.preventDefault();
+        e.returnValue = 'Are you sure you want to leave? Your exam session will be ended.';
+        return e.returnValue;
+    }
+});
+
+// Initialize exam when page loads
+document.addEventListener('DOMContentLoaded', initializeExam);
+</script>
+{% endblock %} 
