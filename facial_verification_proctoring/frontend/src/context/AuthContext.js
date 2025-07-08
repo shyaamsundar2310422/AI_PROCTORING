@@ -33,13 +33,14 @@ export const AuthProvider = ({ children }) => {
     }
   }, []);
 
-  const login = async (email, password) => {
+  const login = async (email, password, username) => {
     try {
-      const response = await axios.post('/api/login', { email, password });
-      const { token, user } = response.data;
-      localStorage.setItem('token', token);
+      const body = username ? { email, password, username } : { email, password };
+      const response = await axios.post('/api/login', body);
+      const { token, user, redirect } = response.data;
+      if (token) localStorage.setItem('token', token);
       setUser(user);
-      return { success: true };
+      return { success: true, redirect };
     } catch (error) {
       return { success: false, error: error.response?.data?.error || 'Login failed' };
     }

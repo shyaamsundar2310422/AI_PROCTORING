@@ -58,7 +58,7 @@
                                         <td>
                                             <button class="btn btn-sm btn-info" onclick="manageExam({{ exam.id }})">Manage</button>
                                             <button class="btn btn-sm btn-success" onclick="inviteStudents({{ exam.id }})">Invite</button>
-                                            <button class="btn btn-sm btn-danger">Delete</button>
+                                            <button class="btn btn-sm btn-danger" onclick="deleteExam({{ exam.id }})">Delete</button>
                                         </td>
                                     </tr>
                                     {% endfor %}
@@ -98,11 +98,11 @@
                             </div>
                             <div class="mb-3">
                                 <label for="startTime" class="form-label">Start Time</label>
-                                <input type="datetime-local" class="form-control" id="startTime" required>
+                                <input type="datetime-local" class="form-control" id="startTime" required value="">
                             </div>
                             <div class="mb-3">
                                 <label for="endTime" class="form-label">End Time</label>
-                                <input type="datetime-local" class="form-control" id="endTime" required>
+                                <input type="datetime-local" class="form-control" id="endTime" required value="">
                             </div>
                         </div>
                         <div class="col-md-6">
@@ -192,11 +192,13 @@ let currentExamId = null;
 
 document.getElementById('createExamBtn').addEventListener('click', async function() {
     const form = document.getElementById('createExamForm');
+    const startTimeValue = document.getElementById('startTime').value;
+    const endTimeValue = document.getElementById('endTime').value;
     const formData = {
         title: document.getElementById('title').value,
         description: document.getElementById('description').value,
-        start_time: document.getElementById('startTime').value,
-        end_time: document.getElementById('endTime').value,
+        start_time: startTimeValue,
+        end_time: endTimeValue,
         duration: parseInt(document.getElementById('duration').value),
         total_marks: parseInt(document.getElementById('totalMarks').value)
     };
@@ -386,5 +388,24 @@ document.getElementById('sendInvitationsBtn').addEventListener('click', async fu
         `;
     }
 });
+
+async function deleteExam(examId) {
+    if (!confirm('Are you sure you want to delete this exam? This action cannot be undone.')) return;
+    try {
+        const response = await fetch(`/api/exam/${examId}`, {
+            method: 'DELETE'
+        });
+        const data = await response.json();
+        if (response.ok) {
+            alert('Exam deleted successfully!');
+            window.location.reload();
+        } else {
+            alert(data.error || 'Failed to delete exam');
+        }
+    } catch (error) {
+        console.error('Error deleting exam:', error);
+        alert('An error occurred while deleting the exam');
+    }
+}
 </script>
 {% endblock %} 

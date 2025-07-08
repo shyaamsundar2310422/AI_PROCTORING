@@ -321,11 +321,23 @@ document.getElementById('acceptInvitationBtn').addEventListener('click', async f
             document.getElementById('invitationStatus').innerHTML = `
                 <div class="alert alert-success">${data.message}</div>
             `;
-            // Reload dashboard data after successful acceptance
+            // Instantly remove the accepted invitation from the DOM
+            const pendingList = document.getElementById('pendingInvitationsList');
+            const cards = pendingList.querySelectorAll('.card');
+            cards.forEach(card => {
+                if (card.innerHTML.includes(invitationCode)) {
+                    card.remove();
+                }
+            });
+            // Hide the card if no more pending invitations
+            if (pendingList.children.length === 0) {
+                document.getElementById('pendingInvitationsCard').style.display = 'none';
+            }
+            // Hide modal and reload dashboard data in the background
             setTimeout(() => {
                 bootstrap.Modal.getInstance(document.getElementById('acceptInvitationModal')).hide();
                 loadDashboardData();
-            }, 1500);
+            }, 1000);
         } else {
             document.getElementById('invitationStatus').innerHTML = `
                 <div class="alert alert-danger">${data.error}</div>

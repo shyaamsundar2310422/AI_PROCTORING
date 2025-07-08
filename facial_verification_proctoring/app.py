@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, send_from_directory
+from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, send_from_directory, make_response
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -19,6 +19,8 @@ from proctoring_face_analyzer import analyze_frame
 import uuid
 import re
 from werkzeug.utils import secure_filename
+from flask_admin import Admin
+from flask_admin.contrib.sqla import ModelView
 
 # Load environment variables
 load_dotenv()
@@ -48,6 +50,15 @@ proctoring_system = ProctoringSystem()
 # Ensure upload directory exists
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 os.makedirs(EXAM_FILES_FOLDER, exist_ok=True)
+
+# Flask-Admin setup
+admin = Admin(app, name='Proctoring Admin', template_mode='bootstrap4')
+
+class SecureModelView(ModelView):
+    def is_accessible(self):
+        return current_user.is_authenticated and getattr(current_user, 'role', None) == 'admin'
+    def inaccessible_callback(self, name, **kwargs):
+        return redirect(url_for('login'))
 
 # Database Models
 class User(UserMixin, db.Model):
@@ -383,14 +394,28 @@ def api_login():
     data = request.get_json()
     email = data.get('email')
     password = data.get('password')
-    user = User.query.filter_by(email=email).first()
-    
+    username = data.get('username')
+
+    user = None
+    # Try to find user by email first
+    if email:
+        user = User.query.filter_by(email=email).first()
+    # For admin, also allow login by username
+    if not user and username:
+        user = User.query.filter_by(username=username).first()
+
     if user and user.check_password(password):
-        if user.is_verified:
+        if user.role == 'admin':
             login_user(user)
             return jsonify({
                 'message': 'Login successful',
-                'redirect': '/dashboard'
+                'redirect': '/admin-dashboard'
+            }), 200
+        elif user.is_verified:
+            login_user(user)
+            return jsonify({
+                'message': 'Login successful',
+                'redirect': '/dashboard' if user.role == 'student' else '/faculty-dashboard'
             }), 200
         else:
             return jsonify({
@@ -399,7 +424,7 @@ def api_login():
                 'redirect': '/verification-pending'
             }), 200
     else:
-        return jsonify({'error': 'Invalid email or password'}), 401
+        return jsonify({'error': 'Invalid email/username or password'}), 401
 
 @app.route('/api/exam/start/<int:exam_id>', methods=['POST'])
 @login_required
@@ -471,36 +496,6 @@ def admin_login_page():
 @app.route('/admin-register', methods=['GET'])
 def admin_register_page():
     return render_template('admin_register.html')
-
-@app.route('/api/admin/login', methods=['POST'])
-def api_admin_login():
-    try:
-        data = request.get_json()
-        email = data.get('email')
-        username = data.get('username')
-        password = data.get('password')
-        
-        if not all([email, username, password]):
-            return jsonify({'error': 'All fields are required'}), 400
-        
-        # First try to find admin by email
-        user = User.query.filter_by(email=email, role='admin').first()
-        
-        # If not found by email, try username
-        if not user:
-            user = User.query.filter_by(username=username, role='admin').first()
-        
-        if user and user.check_password(password):
-            login_user(user)
-            return jsonify({
-                'message': 'Login successful',
-                'redirect': '/admin-dashboard'
-            }), 200
-        else:
-            return jsonify({'error': 'Invalid credentials'}), 401
-    except Exception as e:
-        print(f"Login error: {str(e)}")
-        return jsonify({'error': 'An error occurred during login'}), 500
 
 @app.route('/admin-dashboard')
 @login_required
@@ -645,7 +640,7 @@ def delete_faculty(user_id):
 @login_required
 def logout():
     logout_user()
-    return redirect(url_for('index'))
+    return redirect(url_for('login'))
 
 # Create default admin account if it doesn't exist
 def create_default_admin():
@@ -714,7 +709,17 @@ def demo_exam_verify():
         image_data = base64.b64decode(image_b64)
         with open(ref_path, 'wb') as f:
             f.write(image_data)
-        # If you ever use OpenCV to capture from webcam here, make sure to call cap.release() after use!
+        
+        # 1a. Check for exactly one face using OpenCV
+        nparr = np.frombuffer(image_data, np.uint8)
+        frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+        faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30))
+        face_count = len(faces)
+        if face_count != 1:
+            return jsonify({'error': f'Exactly one face must be present in the frame. Detected: {face_count}'}), 400
+        
         # 2. Generate embedding for reference image
         try:
             ref_embedding = DeepFace.represent(img_path=ref_path, model_name="Facenet", enforce_detection=False)[0]['embedding']
@@ -789,24 +794,20 @@ def proctoring_analyze():
 def create_exam():
     if current_user.role != 'faculty':
         return jsonify({'error': 'Unauthorized'}), 403
-    
     try:
         data = request.get_json()
-        
-        # Create exam
+        # Parse as local time string (no Z, no UTC conversion)
         exam = Exam(
             title=data['title'],
             description=data.get('description', ''),
-            start_time=datetime.fromisoformat(data['start_time'].replace('Z', '+00:00')),
-            end_time=datetime.fromisoformat(data['end_time'].replace('Z', '+00:00')),
+            start_time=datetime.fromisoformat(data['start_time']),
+            end_time=datetime.fromisoformat(data['end_time']),
             duration=data['duration'],
             total_marks=data['total_marks'],
             created_by=current_user.id
         )
-        
         db.session.add(exam)
         db.session.commit()
-        
         return jsonify({
             'success': True,
             'exam_id': exam.id,
@@ -1415,6 +1416,52 @@ def extract_keywords_from_text(text):
     # Return top 20 most frequent words as potential keywords
     sorted_words = sorted(word_freq.items(), key=lambda x: x[1], reverse=True)
     return [word for word, freq in sorted_words[:20]]
+
+@app.after_request
+def add_header(response):
+    response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, post-check=0, pre-check=0, max-age=0'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '-1'
+    return response
+
+# After all model definitions and after db = SQLAlchemy(app)
+admin.add_view(SecureModelView(User, db.session))
+admin.add_view(SecureModelView(Exam, db.session))
+admin.add_view(SecureModelView(Question, db.session))
+
+@app.route('/api/exam/<int:exam_id>', methods=['DELETE'])
+@login_required
+def delete_exam(exam_id):
+    if current_user.role != 'faculty':
+        return jsonify({'error': 'Unauthorized'}), 403
+    exam = Exam.query.get_or_404(exam_id)
+    if exam.created_by != current_user.id:
+        return jsonify({'error': 'Unauthorized'}), 403
+    try:
+        # Delete related ExamFile records and files
+        exam_files = ExamFile.query.filter_by(exam_id=exam_id).all()
+        for file in exam_files:
+            try:
+                if file.file_path and os.path.exists(file.file_path):
+                    os.remove(file.file_path)
+            except Exception:
+                pass
+            db.session.delete(file)
+        # Delete related ExamKeyword records
+        ExamKeyword.query.filter_by(exam_id=exam_id).delete()
+        # Delete related StudentInvitation records
+        StudentInvitation.query.filter_by(exam_id=exam_id).delete()
+        # Delete related ExamSession records
+        ExamSession.query.filter_by(exam_id=exam_id).delete()
+        # Delete related Answer records
+        Answer.query.filter_by(exam_id=exam_id).delete()
+        # Delete the exam itself
+        db.session.delete(exam)
+        db.session.commit()
+        return jsonify({'success': True, 'message': 'Exam deleted successfully'})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
     init_db()  # Initialize database and create admin account

@@ -7,6 +7,10 @@ document.addEventListener('DOMContentLoaded', function() {
             
             const email = document.getElementById('email').value;
             const password = document.getElementById('password').value;
+            const usernameField = document.getElementById('username');
+            const username = usernameField ? usernameField.value : undefined;
+            let body = { email, password };
+            if (username) body.username = username;
             
             try {
                 const response = await fetch('/api/login', {
@@ -14,7 +18,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     headers: {
                         'Content-Type': 'application/json'
                     },
-                    body: JSON.stringify({ email, password })
+                    body: JSON.stringify(body)
                 });
                 
                 const data = await response.json();

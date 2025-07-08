@@ -5,14 +5,23 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Exam Proctoring System</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link href="{{ url_for('static', filename='css/style.css') }}" rel="stylesheet">
     <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: url("/robot-teacher-classroom.jpg") center/cover no-repeat fixed;
+            font-family: Georgia, "Times New Roman", Times, serif;
+            height: 100vh;
+            color: rgb(14, 13, 13);
+        }
         .role-card {
             cursor: pointer;
-            transition: transform 0.2s;
+            transition: transform 0.5s, box-shadow 0.3s;
+            border-radius: 15px;
         }
         .role-card:hover {
             transform: translateY(-5px);
+            box-shadow: 8px 10px 20px rgba(20, 15, 15, 0.2);
         }
         .role-icon {
             font-size: 3rem;
@@ -21,46 +30,52 @@
         .login-options {
             display: none;
         }
+        .card {
+            border-radius: 15px;
+        }
+        h2, h3 {
+            font-weight: bold;
+        }
+        .display-5.mb-4 {
+            font-family: "Trebuchet MS", "Lucida Sans Unicode", "Lucida Grande", "Lucida Sans", Arial, sans-serif;
+            color: rgb(249, 247, 247);
+        }
+        footer {
+            margin-top: 50px;
+            padding: 20px 0;
+            background-color: rgba(255, 255, 255, 0.85);
+        }
     </style>
 </head>
 <body>
     <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
         <div class="container">
-            <a class="navbar-brand" href="/">Exam Proctoring</a>
+            <a class="navbar-brand fw-bold" href="/">Exam Proctoring</a>
         </div>
     </nav>
 
     <div class="container mt-5">
         <!-- Role Selection Section -->
         <div id="roleSelection" class="text-center">
-            <h2 class="mb-4">Welcome to Exam Proctoring System</h2>
+            <h2 class="display-5 mb-4">Welcome to Exam Proctoring System</h2>
             <p class="lead mb-5">Please select your role to continue</p>
             
             <div class="row justify-content-center">
                 <div class="col-md-4 mb-4">
-                    <div class="card role-card" onclick="showLoginOptions('student')">
+                    <div class="card role-card shadow-sm" onclick="showLoginOptions('student')">
                         <div class="card-body text-center">
-                            <div class="role-icon">👨‍🎓</div>
+                            <div class="role-icon" aria-label="Student Icon" role="img">👨‍🎓</div>
                             <h3>Student</h3>
                             <p class="text-muted">Take exams with AI proctoring</p>
                         </div>
                     </div>
                 </div>
                 <div class="col-md-4 mb-4">
-                    <div class="card role-card" onclick="showLoginOptions('faculty')">
+                    <div class="card role-card shadow-sm" onclick="showLoginOptions('faculty')">
                         <div class="card-body text-center">
-                            <div class="role-icon">👨‍🏫</div>
+                            <div class="role-icon" aria-label="Faculty Icon" role="img">👨‍🏫</div>
                             <h3>Faculty</h3>
                             <p class="text-muted">Create and manage exams</p>
-                        </div>
-                    </div>
-                </div>
-                <div class="col-md-4 mb-4">
-                    <div class="card role-card" onclick="showLoginOptions('admin')">
-                        <div class="card-body text-center">
-                            <div class="role-icon">👨‍💼</div>
-                            <h3>Admin</h3>
-                            <p class="text-muted">Manage users and system</p>
                         </div>
                     </div>
                 </div>
@@ -68,16 +83,16 @@
         </div>
 
         <!-- Login/Register Options -->
-        <div id="loginOptions" class="login-options">
+        <div id="loginOptions" class="login-options mt-5">
             <div class="row justify-content-center">
                 <div class="col-md-6">
-                    <div class="card">
+                    <div class="card shadow-lg">
                         <div class="card-body text-center">
                             <h3 id="roleTitle" class="mb-4"></h3>
                             <div class="d-grid gap-3">
                                 <a id="loginLink" href="#" class="btn btn-primary btn-lg">Login</a>
                                 <a id="registerLink" href="#" class="btn btn-outline-primary btn-lg">Register</a>
-                                <button onclick="backToHome()" class="btn btn-link">Back to Home</button>
+                                <button onclick="backToHome()" class="btn btn-link">⬅ Back to Home</button>
                             </div>
                         </div>
                     </div>
@@ -85,6 +100,11 @@
             </div>
         </div>
     </div>
+
+    <!-- Footer -->
+    <footer class="text-center text-muted small">
+        &copy; 2025 Exam Proctoring System. All rights reserved.
+    </footer>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
     <script>
@@ -101,17 +121,17 @@
             if (role === 'student') {
                 loginLink.href = '/login';
                 registerLink.href = '/register';
+                registerLink.style.display = 'inline-block';
             } else if (role === 'faculty') {
                 loginLink.href = '/faculty-login';
                 registerLink.href = '/faculty-register';
-            } else if (role === 'admin') {
-                loginLink.href = '/admin-login';
-                registerLink.style.display = 'none';
+                registerLink.style.display = 'inline-block';
             }
         }
 
         function backToHome() {
-            window.location.href = '/';
+            document.getElementById('roleSelection').style.display = 'block';
+            document.getElementById('loginOptions').style.display = 'none';
         }
     </script>
 </body>

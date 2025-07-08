@@ -23,7 +23,7 @@
                         </div>
                         <div class="col-md-6 text-end">
                             <strong>Started:</strong> <span id="startTime">--</span><br>
-                            <strong>Ends:</strong> {{ exam.end_time.strftime('%Y-%m-%d %H:%M') }}
+                            <strong>Ends:</strong> <span id="examEndTime" data-utc="{{ exam.end_time.isoformat() }}"></span>
                         </div>
                     </div>
                 </div>
@@ -135,7 +135,8 @@
 <script>
 let examId = {{ exam.id }};
 let examDuration = {{ exam.duration }}; // in minutes
-let examEndTime = new Date('{{ exam.end_time.isoformat() }}');
+let globalExamEndTime = new Date('{{ exam.end_time.isoformat() }}');
+let examEndTime = null;
 let sessionId = null;
 let proctoringStream = null;
 let proctoringInterval = null;
@@ -170,6 +171,9 @@ async function initializeExam() {
         if (response.ok) {
             sessionId = data.session_id;
             examStartTime = new Date();
+            // Set examEndTime to the lesser of (now + duration) and globalExamEndTime
+            const durationEnd = new Date(examStartTime.getTime() + examDuration * 60000);
+            examEndTime = durationEnd < globalExamEndTime ? durationEnd : globalExamEndTime;
             startTimeElement.textContent = examStartTime.toLocaleTimeString();
             
             // Load question paper
@@ -434,5 +438,20 @@ window.addEventListener('beforeunload', (e) => {
 
 // Initialize exam when page loads
 document.addEventListener('DOMContentLoaded', initializeExam);
+
+// After DOMContentLoaded or in initializeExam, convert end time string to local time for display
+function parseLocalDateTime(str) {
+    // str is 'YYYY-MM-DDTHH:MM' or 'YYYY-MM-DDTHH:MM:SS'
+    const [date, time] = str.split('T');
+    const [year, month, day] = date.split('-').map(Number);
+    const [hour, minute, second = 0] = time.split(':').map(Number);
+    return new Date(year, month - 1, day, hour, minute, second);
+}
+const examEndElem = document.getElementById('examEndTime');
+if (examEndElem) {
+    const localString = examEndElem.getAttribute('data-utc');
+    const localDate = parseLocalDateTime(localString);
+    examEndElem.textContent = localDate.toLocaleString();
+}
 </script>
 {% endblock %} 
