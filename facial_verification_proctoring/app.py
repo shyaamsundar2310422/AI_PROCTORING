@@ -1,10 +1,11 @@
-from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, send_from_directory, make_response
+from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, send_from_directory, make_response, session
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_cors import CORS
 import os
 from datetime import datetime, timezone
+from dateutil import parser  
 from proctoring_system import ProctoringSystem
 from dotenv import load_dotenv
 from functools import wraps
@@ -153,6 +154,14 @@ class StudentInvitation(db.Model):
     is_accepted = db.Column(db.Boolean, default=False)
     accepted_at = db.Column(db.DateTime)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+class AnswerFile(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    exam_id = db.Column(db.Integer, db.ForeignKey('exam.id'), nullable=False)
+    student_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    file_path = db.Column(db.String(500), nullable=False)
+    original_filename = db.Column(db.String(200), nullable=False)
+    uploaded_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 @login_manager.user_loader
 def load_user(user_id):
@@ -796,12 +805,14 @@ def create_exam():
         return jsonify({'error': 'Unauthorized'}), 403
     try:
         data = request.get_json()
-        # Parse as local time string (no Z, no UTC conversion)
+        # Parse as local time string (no UTC conversion)
+        start_time = datetime.fromisoformat(data['start_time'])
+        end_time = datetime.fromisoformat(data['end_time'])
         exam = Exam(
             title=data['title'],
             description=data.get('description', ''),
-            start_time=datetime.fromisoformat(data['start_time']),
-            end_time=datetime.fromisoformat(data['end_time']),
+            start_time=start_time,
+            end_time=end_time,
             duration=data['duration'],
             total_marks=data['total_marks'],
             created_by=current_user.id
@@ -857,20 +868,21 @@ def upload_exam_file(exam_id):
         db.session.add(exam_file)
         db.session.commit()
         
-        # Extract text and keywords if it's a question paper
+        # Determine if a keywords file already exists for this exam
+        existing_keywords_file = ExamFile.query.filter_by(exam_id=exam_id, file_type='keywords').first()
+        # Extract text and keywords only if:
+        # - This upload is a keywords file, OR
+        # - This upload is a question paper AND there is no keywords file for this exam
         extracted_keywords = []
-        if file_type == 'question_paper':
-            file_extension = filename.rsplit('.', 1)[1].lower()
+        if (file_type == 'keywords') or (file_type == 'question_paper' and not existing_keywords_file):
+            file_extension = filename.rsplit('.', 1)[1].lower();
             if file_extension == 'pdf':
                 text = extract_text_from_pdf(file_path)
             elif file_extension == 'docx':
                 text = extract_text_from_docx(file_path)
             else:
-                # For txt files, read directly
                 with open(file_path, 'r', encoding='utf-8') as f:
                     text = f.read()
-            
-            # Extract keywords
             extracted_keywords = extract_keywords_from_text(text)
         
         return jsonify({
@@ -979,10 +991,10 @@ def get_exam_invitations(exam_id):
             'student_email': inv.student_email,
             'invitation_code': inv.invitation_code,
             'is_accepted': inv.is_accepted,
-            'accepted_at': inv.accepted_at.replace(tzinfo=timezone.utc).isoformat() if inv.accepted_at else None,
-            'created_at': inv.created_at.replace(tzinfo=timezone.utc).isoformat(),
-            'start_time': exam.start_time.replace(tzinfo=timezone.utc).isoformat(),
-            'end_time': exam.end_time.replace(tzinfo=timezone.utc).isoformat(),
+            'accepted_at': inv.accepted_at.astimezone(timezone.utc).isoformat() if inv.accepted_at else None,
+            'created_at': inv.created_at.astimezone(timezone.utc).isoformat(),
+            'start_time': exam.start_time.astimezone(timezone.utc).isoformat(),
+            'end_time': exam.end_time.astimezone(timezone.utc).isoformat(),
         } for inv in invitations]
     })
 
@@ -1087,8 +1099,8 @@ def get_available_exams():
                 'id': exam.id,
                 'title': exam.title,
                 'description': exam.description,
-                'start_time': exam.start_time.replace(tzinfo=timezone.utc).isoformat(),
-                'end_time': exam.end_time.replace(tzinfo=timezone.utc).isoformat(),
+                'start_time': exam.start_time.astimezone(timezone.utc).isoformat(),
+                'end_time': exam.end_time.astimezone(timezone.utc).isoformat(),
                 'duration': exam.duration,
                 'total_marks': exam.total_marks
             } for exam in exams]
@@ -1119,9 +1131,9 @@ def get_pending_invitations():
                     'exam_id': exam.id,
                     'exam_title': exam.title,
                     'exam_description': exam.description,
-                    'created_at': invitation.created_at.replace(tzinfo=timezone.utc).isoformat(),
-                    'start_time': exam.start_time.replace(tzinfo=timezone.utc).isoformat(),
-                    'end_time': exam.end_time.replace(tzinfo=timezone.utc).isoformat(),
+                    'created_at': invitation.created_at.astimezone(timezone.utc).isoformat(),
+                    'start_time': exam.start_time.astimezone(timezone.utc).isoformat(),
+                    'end_time': exam.end_time.astimezone(timezone.utc).isoformat(),
                 })
         
         return jsonify({
@@ -1135,7 +1147,6 @@ def get_pending_invitations():
 def start_exam_session(exam_id):
     if current_user.role != 'student':
         return jsonify({'error': 'Unauthorized'}), 403
-    
     try:
         # Check if student has access to this exam
         invitation = StudentInvitation.query.filter_by(
@@ -1143,42 +1154,36 @@ def start_exam_session(exam_id):
             student_email=current_user.email,
             is_accepted=True
         ).first()
-        
         if not invitation:
             return jsonify({'error': 'No access to this exam'}), 403
-        
         # Check if exam is currently active
         exam = Exam.query.get_or_404(exam_id)
-        now = datetime.utcnow()
-        
+        now = datetime.now()  # Use local time
         if now < exam.start_time:
             return jsonify({'error': 'Exam has not started yet'}), 400
-        
         if now > exam.end_time:
             return jsonify({'error': 'Exam has ended'}), 400
-        
-        # Check if student already has an active session
-        active_session = ExamSession.query.filter_by(
+        # Check if student already has an active or ended session
+        any_session = ExamSession.query.filter_by(
             user_id=current_user.id,
-            exam_id=exam_id,
-            end_time=None
+            exam_id=exam_id
         ).first()
-        
-        if active_session:
-            return jsonify({'error': 'You already have an active session for this exam'}), 400
-        
+        if any_session:
+            return jsonify({'error': 'You have already attempted this exam and cannot restart it.'}), 400
+        # Check if identity verification is required for this exam
+        if session.get('exam_verified') != str(exam_id):
+            return jsonify({'error': 'Identity verification required'}), 403
         # Create new exam session
-        session = ExamSession(
+        exam_session = ExamSession(
             user_id=current_user.id,
             exam_id=exam_id,
             start_time=now
         )
-        db.session.add(session)
+        db.session.add(exam_session)
         db.session.commit()
-        
         return jsonify({
             'success': True,
-            'session_id': session.id,
+            'session_id': exam_session.id,
             'message': 'Exam session started successfully'
         })
     except Exception as e:
@@ -1288,7 +1293,7 @@ def end_exam_session(exam_id):
             return jsonify({'error': 'No active exam session'}), 400
         
         # End session
-        active_session.end_time = datetime.utcnow()
+        active_session.end_time = datetime.utcnow().replace(tzinfo=timezone.utc)  # Make UTC-aware
         db.session.commit()
         
         return jsonify({
@@ -1327,7 +1332,7 @@ def get_exam_session_status(exam_id):
             return jsonify({
                 'has_active_session': True,
                 'session_id': active_session.id,
-                'start_time': active_session.start_time.isoformat()
+                'start_time': active_session.start_time.astimezone(timezone.utc).isoformat()  # Ensure UTC
             })
         else:
             return jsonify({
@@ -1335,6 +1340,13 @@ def get_exam_session_status(exam_id):
             })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+def ensure_utc(dt):
+    if dt is None:
+        return None
+    if dt.tzinfo:
+        return dt.astimezone(timezone.utc)
+    return dt.replace(tzinfo=timezone.utc)
 
 @app.route('/exam/<int:exam_id>')
 @login_required
@@ -1358,7 +1370,7 @@ def exam_interface(exam_id):
         exam = Exam.query.get_or_404(exam_id)
         
         # Check if exam is currently active
-        now = datetime.utcnow()
+        now = datetime.now()  # Use local time
         if now < exam.start_time:
             flash('This exam has not started yet')
             return redirect(url_for('dashboard'))
@@ -1367,7 +1379,11 @@ def exam_interface(exam_id):
             flash('This exam has ended')
             return redirect(url_for('dashboard'))
         
-        return render_template('exam_interface.html', exam=exam)
+        # Pass datetimes as is (local time)
+        exam_data = exam.__dict__.copy()
+        exam_data['start_time'] = exam.start_time
+        exam_data['end_time'] = exam.end_time
+        return render_template('exam_interface.html', exam=exam_data)
     except Exception as e:
         flash('Error accessing exam')
         return redirect(url_for('dashboard'))
@@ -1459,6 +1475,116 @@ def delete_exam(exam_id):
         db.session.delete(exam)
         db.session.commit()
         return jsonify({'success': True, 'message': 'Exam deleted successfully'})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/exam/<int:exam_id>/verify_identity', methods=['POST'])
+@login_required
+def verify_exam_identity(exam_id):
+    if current_user.role != 'student':
+        return jsonify({'error': 'Unauthorized'}), 403
+    data = request.get_json()
+    image_b64 = data.get('image')
+    if not image_b64:
+        return jsonify({'error': 'No image provided'}), 400
+    try:
+        # Save reference image
+        os.makedirs('reference_faces', exist_ok=True)
+        ref_path = f'reference_faces/{current_user.username}_exam.jpg'
+        image_data = base64.b64decode(image_b64)
+        with open(ref_path, 'wb') as f:
+            f.write(image_data)
+        # Generate embedding for reference image
+        ref_embedding = DeepFace.represent(img_path=ref_path, model_name="Facenet", enforce_detection=False)[0]['embedding']
+        # Generate embedding for profile picture
+        profile_path = os.path.join(app.root_path, 'static', current_user.photo_path)
+        profile_embedding = DeepFace.represent(img_path=profile_path, model_name="Facenet", enforce_detection=False)[0]['embedding']
+        # Cosine similarity
+        similarity = np.dot(ref_embedding, profile_embedding) / (np.linalg.norm(ref_embedding) * np.linalg.norm(profile_embedding))
+        threshold = 0.6
+        if similarity > threshold:
+            # Mark verification as passed (in session)
+            session['exam_verified'] = f'{exam_id}'
+            return jsonify({'success': True, 'similarity': similarity}), 200
+        else:
+            return jsonify({'success': False, 'similarity': similarity, 'error': 'Face does not match profile'}), 200
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/exam/<int:exam_id>/upload-answer', methods=['POST'])
+@login_required
+def upload_answer_script(exam_id):
+    if current_user.role != 'student':
+        return jsonify({'error': 'Unauthorized'}), 403
+    exam = Exam.query.get_or_404(exam_id)
+    try:
+        if 'file' not in request.files:
+            return jsonify({'error': 'No file provided'}), 400
+        file = request.files['file']
+        if file.filename == '':
+            return jsonify({'error': 'No file selected'}), 400
+        if not allowed_file(file.filename):
+            return jsonify({'error': 'File type not allowed'}), 400
+        # Save file
+        answers_folder = os.path.join(app.root_path, 'static', 'uploads', 'answers')
+        os.makedirs(answers_folder, exist_ok=True)
+        filename = secure_filename(file.filename)
+        unique_filename = f"{exam_id}_{current_user.id}_{uuid.uuid4().hex}_{filename}"
+        file_path = os.path.join(answers_folder, unique_filename)
+        file.save(file_path)
+        # Save record in AnswerFile
+        answer_file = AnswerFile(
+            exam_id=exam_id,
+            student_id=current_user.id,
+            file_path=os.path.join('uploads', 'answers', unique_filename),
+            original_filename=filename
+        )
+        db.session.add(answer_file)
+        db.session.commit()
+        return jsonify({'success': True, 'message': 'Answer script uploaded successfully', 'file_path': answer_file.file_path})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
+
+# Endpoint to list uploaded answer files for the current student and exam
+@app.route('/api/exam/<int:exam_id>/my-answers', methods=['GET'])
+@login_required
+def list_my_uploaded_answers(exam_id):
+    if current_user.role != 'student':
+        return jsonify({'error': 'Unauthorized'}), 403
+    exam = Exam.query.get_or_404(exam_id)
+    now = datetime.now()
+    # Only show files if the exam is still active
+    if now > exam.end_time:
+        return jsonify({'files': []})
+    files = AnswerFile.query.filter_by(exam_id=exam_id, student_id=current_user.id).order_by(AnswerFile.uploaded_at.desc()).all()
+    return jsonify({'files': [
+        {
+            'id': f.id,
+            'original_filename': f.original_filename,
+            'file_path': f.file_path,
+            'uploaded_at': f.uploaded_at.isoformat()
+        } for f in files
+    ]})
+
+@app.route('/api/exam/<int:exam_id>/delete-answer/<int:file_id>', methods=['DELETE'])
+@login_required
+def delete_uploaded_answer(exam_id, file_id):
+    if current_user.role != 'student':
+        return jsonify({'error': 'Unauthorized'}), 403
+    answer_file = AnswerFile.query.filter_by(id=file_id, exam_id=exam_id, student_id=current_user.id).first()
+    if not answer_file:
+        return jsonify({'error': 'File not found'}), 404
+    try:
+        # Delete file from disk
+        file_path = os.path.join(app.root_path, 'static', answer_file.file_path)
+        if os.path.exists(file_path):
+            os.remove(file_path)
+        db.session.delete(answer_file)
+        db.session.commit()
+        return jsonify({'success': True, 'message': 'File deleted successfully'})
     except Exception as e:
         db.session.rollback()
         return jsonify({'error': str(e)}), 500

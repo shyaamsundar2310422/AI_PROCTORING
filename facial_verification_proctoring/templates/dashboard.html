@@ -138,6 +138,24 @@
   </div>
 </div>
 
+<!-- Identity Verification Modal for Exam Start -->
+<div class="modal fade" id="verifyIdentityModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="verifyModalTitle">Identity Verification</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body text-center">
+        <video id="verifyVideo" width="320" height="240" autoplay playsinline style="border:1px solid #ccc;"></video>
+        <canvas id="verifyCanvas" width="320" height="240" style="display:none;"></canvas>
+        <div id="verifyStatus" class="mt-2"></div>
+        <button class="btn btn-primary mt-2" id="captureVerifyBtn">Capture & Verify</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 {% endblock %}
 {% block scripts %}
 {{ super() }}
@@ -257,7 +275,7 @@ function displayAvailableExams(exams) {
                         <span class="badge ${statusClass}">${status}</span>
                     </div>
                     ${now >= examStart && now <= examEnd ? 
-                        `<button class="btn btn-success btn-sm" onclick="startExam(${exam.id})">Start Exam</button>` : 
+                        `<button class="btn btn-success btn-sm" onclick="openVerifyModal(${exam.id}, '${exam.title}')">Start Exam</button>` : 
                         ''
                     }
                 </div>
@@ -350,11 +368,6 @@ document.getElementById('acceptInvitationBtn').addEventListener('click', async f
         `;
     }
 });
-
-function startExam(examId) {
-    // Redirect to exam interface
-    window.location.href = `/exam/${examId}`;
-}
 
 // Open webcam when modal is shown
 const demoExamModal = document.getElementById('demoExamModal');
@@ -453,5 +466,65 @@ function stopLiveProctoring() {
         proctoringInterval = null;
     }
 }
+
+let verifyStream = null;
+let currentExamId = null;
+let currentExamTitle = '';
+function openVerifyModal(examId, examTitle) {
+    currentExamId = examId;
+    currentExamTitle = examTitle;
+    document.getElementById('verifyModalTitle').textContent = `Identity Verification - ${examTitle}`;
+    document.getElementById('verifyStatus').innerHTML = '';
+    new bootstrap.Modal(document.getElementById('verifyIdentityModal')).show();
+}
+const verifyIdentityModal = document.getElementById('verifyIdentityModal');
+verifyIdentityModal.addEventListener('shown.bs.modal', async () => {
+    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+        verifyStream = await navigator.mediaDevices.getUserMedia({ video: true });
+        document.getElementById('verifyVideo').srcObject = verifyStream;
+    }
+});
+verifyIdentityModal.addEventListener('hidden.bs.modal', () => {
+    if (verifyStream) {
+        verifyStream.getTracks().forEach(track => track.stop());
+        verifyStream = null;
+    }
+    document.getElementById('verifyVideo').srcObject = null;
+    document.getElementById('captureVerifyBtn').disabled = false;
+    document.getElementById('captureVerifyBtn').style.display = '';
+});
+document.getElementById('captureVerifyBtn').onclick = async function() {
+    const video = document.getElementById('verifyVideo');
+    const canvas = document.getElementById('verifyCanvas');
+    const statusElem = document.getElementById('verifyStatus');
+    canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+    const dataUrl = canvas.toDataURL('image/jpeg');
+    const base64 = dataUrl.split(',')[1];
+    statusElem.innerHTML = 'Verifying...';
+    try {
+        const response = await fetch(`/api/exam/${currentExamId}/verify_identity`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ image: base64 }),
+            credentials: 'include'
+        });
+        const data = await response.json();
+        if (data.success) {
+            statusElem.innerHTML = '<span class="text-success">Identity verified! Starting exam...</span>';
+            if (verifyStream) {
+                verifyStream.getTracks().forEach(track => track.stop());
+                verifyStream = null;
+            }
+            setTimeout(() => {
+                bootstrap.Modal.getInstance(document.getElementById('verifyIdentityModal')).hide();
+                window.location.href = `/exam/${currentExamId}`;
+            }, 1000);
+        } else {
+            statusElem.innerHTML = `<span class="text-danger">Verification failed: ${data.error || 'Face does not match profile.'}</span>`;
+        }
+    } catch (err) {
+        statusElem.innerHTML = `<span class="text-danger">Error: ${err}</span>`;
+    }
+};
 </script>
 {% endblock %} 

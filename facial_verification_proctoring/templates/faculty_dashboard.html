@@ -51,8 +51,8 @@
                                     {% for exam in exams %}
                                     <tr>
                                         <td>{{ exam.title }}</td>
-                                        <td>{{ exam.start_time.strftime('%Y-%m-%d %H:%M') }}</td>
-                                        <td>{{ exam.end_time.strftime('%Y-%m-%d %H:%M') }}</td>
+                                        <td><span class="exam-start-time" data-utc="{{ exam.start_time.isoformat() }}"></span></td>
+                                        <td><span class="exam-end-time" data-utc="{{ exam.end_time.isoformat() }}"></span></td>
                                         <td>{{ exam.duration }} minutes</td>
                                         <td>{{ exam.total_marks }}</td>
                                         <td>
@@ -190,6 +190,14 @@
 <script>
 let currentExamId = null;
 
+function parseLocalDateTime(s) {
+    // s is 'YYYY-MM-DDTHH:MM'
+    const [date, time] = s.split('T');
+    const [year, month, day] = date.split('-').map(Number);
+    const [hour, minute] = time.split(':').map(Number);
+    return new Date(year, month - 1, day, hour, minute);
+}
+
 document.getElementById('createExamBtn').addEventListener('click', async function() {
     const form = document.getElementById('createExamForm');
     const startTimeValue = document.getElementById('startTime').value;
@@ -197,10 +205,10 @@ document.getElementById('createExamBtn').addEventListener('click', async functio
     const formData = {
         title: document.getElementById('title').value,
         description: document.getElementById('description').value,
-        start_time: startTimeValue,
+        start_time: startTimeValue, // send as local time string
         end_time: endTimeValue,
-        duration: parseInt(document.getElementById('duration').value),
-        total_marks: parseInt(document.getElementById('totalMarks').value)
+        duration: parseInt(document.getElementById('duration').value, 10),
+        total_marks: parseInt(document.getElementById('totalMarks').value, 10)
     };
 
     try {
@@ -286,6 +294,8 @@ async function saveKeywords(examId, keywords) {
         
         if (response.ok) {
             console.log('Keywords saved successfully');
+            // Refresh the modal to show new keywords
+            if (typeof manageExam === 'function') manageExam(examId);
         } else {
             console.error('Failed to save keywords:', data.error);
         }
@@ -407,5 +417,20 @@ async function deleteExam(examId) {
         alert('An error occurred while deleting the exam');
     }
 }
+
+document.addEventListener('DOMContentLoaded', function() {
+    document.querySelectorAll('.exam-start-time').forEach(function(elem) {
+        const utc = elem.getAttribute('data-utc');
+        if (utc) {
+            elem.textContent = new Date(utc).toLocaleString();
+        }
+    });
+    document.querySelectorAll('.exam-end-time').forEach(function(elem) {
+        const utc = elem.getAttribute('data-utc');
+        if (utc) {
+            elem.textContent = new Date(utc).toLocaleString();
+        }
+    });
+});
 </script>
 {% endblock %} 
